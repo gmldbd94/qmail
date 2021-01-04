@@ -1,0 +1,649 @@
+b.txt 확인 해보기 사용 명령어 포함
+
+-사용한 파일
+(압축 해제,패치 방법)
+
+tar xvzf qmail/qmail-1.03.tar.gz 
+patch -p1 < ../qmail/qmail-1.03.errno.patch
+
+tar xvzf qmail/ucspi-tcp-0.88.tar.gz 
+patch -p1 <../qmail/ucspi-tcp-0.88.errno.patch
+
+tar xzvf /home/nugu/qmail/daemontools-0.76.tar.gz 
+patch -p1 </home/nugu/qmail/daemontools-0.76.errno.patch 
+
+tar xvzf qmail/vpopmail-5.5.0.tar.gz 
+
+tar xvzf qmail/qmail-smtpd-auth-0.31.tar.gz
+
+
+----------------------------------------------------------------------
+
+2.1. 유저, 그룹 추가
+일단 타볼을 풀고
+
+tar xzf qmail-1.03.tar.gz
+cd qmail-1.03
+ 
+
+다음 디렉토리를 만든다.
+
+ mkdir /var/qmail
+ 
+
+
+groupadd nofiles
+useradd -g nofiles -d /var/qmail/alias alias
+useradd -g nofiles -d /var/qmail qmaild
+useradd -g nofiles -d /var/qmail qmaill
+useradd -g nofiles -d /var/qmail qmailp
+groupadd qmail
+useradd -g qmail -d /var/qmail qmailq
+useradd -g qmail -d /var/qmail qmailr
+useradd -g qmail -d /var/qmail qmails 
+ 
+
+
+다음과 같이 qmail 바이너리를 만들고 인스톨 해준다.
+
+$ make
+$ make setup check
+ 
+
+다음 기본 control 파일들의 설정을 위해
+
+$ ./config
+ 
+
+이것이 정상적으로 실행 되었다면 /var/qmail/control/ 안에는 qmail이 정상적으로 작동하기 위한 설정 파일들이 생겨야 한다. 만약 그렇지 않다면 서버의 DNS 설정(MX 레코드)에 문제가 있는 것이다.
+
+이쯤에서 qmail을 위한 몇가지 부수적인 프로그램들 (ucspi-tcp , daemontools , autorespond)을 설치한다.
+
+ucspi-tcp
+
+$ tar xzf ucspi-tcp-0.88.tar.gz
+$ cd ucspi-tcp-0.88
+$ make
+$ make setup check
+ 
+
+daemontools
+
+$ mkdir -p /package
+$ chmod 1755 /package
+$ cd /package
+ 
+
+다운로드 받은 daemontools 소스 파일을 /package 로 옮긴 후 설치를 진행한다.
+
+$ mv ~/down/daemontools-0.76.tar.gz /package 
+
+$ tar xzf daemontools-0.76.tar.gz
+$ rm daemontools-0.76.tar.gz
+$ cd admin/daemontools-0.76
+$ package/install
+------------------------------------------------------------------- 
+각 파일 설치도중   에러 나면
+
+patch -p1 < ../qmail/qmail-1.03.errno.patch
+patch -p1 <../qmail/ucspi-tcp-0.88.errno.patch
+patch -p1 < /home/nugu/qmail/daemontools-0.76.errno.patch 
+------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------
+2.3. 스크립트
+--------------------------------------------------------------------------
+
+모두 이상없이 설치가 되었다면 다시 qmail 운영에 필요한 스크립트들과 파일들을 만든다.
+
+/var/qmail/rc 의 내용
+
+#!/bin/sh
+exec env - PATH="/var/qmail/bin:$PATH" \
+qmail-start ./Maildir/
+ 
+
+이 파일에 실행 퍼미션을 준다.
+
+chmod a+x /var/qmail/rc
+ 
+
+다음은 큐메일 데몬을 위한 디렉토리와 파일들을 생성.
+
+mkdir -p /var/qmail/supervise/qmail-send/log
+mkdir -p /var/qmail/supervise/qmail-smtpd/log
+chmod +t /var/qmail/supervise/qmail-send
+chmod +t /var/qmail/supervise/qmail-smtpd
+ 
+
+/var/qmail/supervise/qmail-send/run 의 내용
+
+#!/bin/sh
+exec /var/qmail/rc
+ 
+
+/var/qmail/supervise/qmail-send/log/run 의 내용
+
+#!/bin/sh
+exec /usr/local/bin/setuidgid qmaill \
+     /usr/local/bin/multilog t /var/log/qmail
+ 
+
+/var/qmail/supervise/qmail-smtpd/run 의 내용
+
+#!/bin/sh
+Q_UID=`id -u qmaild`
+Q_GID=`id -g qmaild`
+exec /usr/local/bin/softlimit -m 2000000 \
+     /usr/local/bin/tcpserver -vRHl 0 -x /etc/tcp.smtp.cdb \
+     -u $Q_UID -g $Q_GID 0 25 /var/qmail/bin/qmail-smtpd 2>&1
+ 
+
+위와 같이 qmaild 의 UDI,GDI 를 사용 하거나, vpopmail을 사용할 것이라면 vpopmail 권한으로 실행되도록 한다.
+
+
+
+/var/qmail/supervise/qmail-smtpd/log/run 의 내용
+
+#!/bin/sh
+exec /usr/local/bin/setuidgid qmaill \
+     /usr/local/bin/multilog t /var/log/qmail/smtpd
+ 
+
+이렇게 편집한 파일들에 실행 권한을 준다.
+
+$ chmod 755 /var/qmail/supervise/qmail-send/run
+$ chmod 755 /var/qmail/supervise/qmail-send/log/run
+$ chmod 755 /var/qmail/supervise/qmail-smtpd/run
+$ chmod 755 /var/qmail/supervise/qmail-smtpd/log/run
+ 
+
+다음은 qmail-smtpd 를 위한 로그 디렉토리 만들기
+
+$ mkdir -p /var/log/qmail/smtpd
+$ chown qmaill /var/log/qmail /var/log/qmail/smtpd
+ 
+
+vpopmail의 로밍 서비스(고정 IP를 가지고 있지 않은 POP 유저에게 SMTP 릴레이를 열어 주는 것)를 사용할 것 이라면 다음장으로 넘어간다.
+
+다음 파일에는 qmail-smtpd가 릴레이를 허용 할 주소를 적어주는 것이다. 이 예에서 사용한 192.168.1.1은 설치할 서버의 실제 주소로 바꿔야 한다. 그외 릴레이를 허용할 주소가 있다면 같은 형식으로 추가한다.
+
+/etc/tcp.smtp의 내용
+
+------------------------------------------------------------------------------------------
+2.4. 기본 alias 계정
+-------------------------------------------------------------------------------------------
+qmail은 root 계정으로 메일을 배달하지 않으므로, 알리아스를 반듯이 만들어 줍니다. 그리고 postmaster, mailer-daemon 도 역시 일반 계정으로 알리아스를 만드는 것이 좋습니다.
+
+예를 들어 이 주소들로 도착하는 메일은 nugu 란 계정으로 받아보려면
+
+$ echo nugu > /var/qmail/alias/.qmail-root
+$ echo nugu > /var/qmail/alias/.qmail-postmaster
+$ echo nugu > /var/qmail/alias/.qmail-mailer-daemon
+$ cd /var/qmail/alias/
+$ chmod 644 .qmail-root .qmail-postmaster .qmail-mailer-daemon
+ 
+
+127.0.0.1:allow,RELAYCLIENT=""
+192.168.0.3:allow,RELAYCLIENT=""
+ 
+
+이 파일은 실제로 tcpserver가 읽을 수 있는 cdb 형식으로 바꿔야 하므로 다음과 같이 해준다.
+
+$ tcprules /etc/tcp.smtp.cdb /etc/tcp.smtp.tmp < /etc/tcp.smtp
+ 
+---------------------------------------------------------------------------------
+2.5. qmail 시동 파일
+----------------------------------------------------------------------------------
+레드헷 계열의 배포본에서 사용할 수 있는 qmail 데몬의 부트 스크립트이다.
+
+#!/bin/sh
+
+# For Red Hat chkconfig
+# chkconfig: - 80 30
+# description: the qmail MTA
+
+PATH=/var/qmail/bin:/bin:/usr/bin:/usr/local/bin:/usr/local/sbin
+export PATH
+
+case "$1" in
+  start)
+    echo "Starting qmail"
+	 if [ -e /service/qmail-send ] ; then
+	 	if svok /service/qmail-send ; then
+			svc -u /service/qmail-send
+		else
+			echo qmail-send supervise not running
+		fi
+	 else
+	 	ln -s /var/qmail/supervise/qmail-send /service/
+	 fi
+
+	 if [ -e /service/qmail-smtpd ] ; then
+	 	if svok /service/qmail-smtpd ; then
+			svc -u /service/qmail-smtpd
+		else
+			echo qmail-smtpd supervise not running
+		fi
+	 else
+	 	ln -s /var/qmail/supervise/qmail-smtpd /service/
+	 fi
+	 
+    if [ -d /var/lock/subsys ]; then
+      touch /var/lock/subsys/qmail
+    fi
+    ;;
+  stop)
+    echo "Stopping qmail..."
+    echo "  qmail-smtpd"
+    svc -dx /service/qmail-smtpd /service/qmail-smtpd/log
+	 rm -f /service/qmail-smtpd
+    echo "  qmail-send"
+    svc -dx /service/qmail-send /service/qmail-send/log
+	 rm -f /service/qmail-send
+    if [ -f /var/lock/subsys/qmail ]; then
+      rm /var/lock/subsys/qmail
+    fi
+    ;;
+  stat)
+    svstat /service/qmail-send
+    svstat /service/qmail-send/log
+    svstat /service/qmail-smtpd
+    svstat /service/qmail-smtpd/log
+    qmail-qstat
+    ;;
+  doqueue|alrm|flush)
+    echo "Flushing timeout table and sending ALRM signal to qmail-send."
+    /var/qmail/bin/qmail-tcpok
+    svc -a /service/qmail-send
+    ;;
+  queue)
+    qmail-qstat
+    qmail-qread
+    ;;
+  reload|hup)
+    echo "Sending HUP signal to qmail-send."
+    svc -h /service/qmail-send
+    ;;
+  pause)
+    echo "Pausing qmail-send"
+    svc -p /service/qmail-send
+    echo "Pausing qmail-smtpd"
+    svc -p /service/qmail-smtpd
+    ;;
+  cont)
+    echo "Continuing qmail-send"
+    svc -c /service/qmail-send
+    echo "Continuing qmail-smtpd"
+    svc -c /service/qmail-smtpd
+    ;;
+  restart)
+    echo "Restarting qmail:"
+    echo "* Stopping qmail-smtpd."
+    svc -d /service/qmail-smtpd
+    echo "* Sending qmail-send SIGTERM and restarting."
+    svc -t /service/qmail-send
+    echo "* Restarting qmail-smtpd."
+    svc -u /service/qmail-smtpd
+    ;;
+  cdb)
+    tcprules /etc/tcp.smtp.cdb /etc/tcp.smtp.tmp < /etc/tcp.smtp
+    chmod 644 /etc/tcp.smtp.cdb
+    echo "Reloaded /etc/tcp.smtp."
+    ;;
+  help)
+    cat <<HELP
+   stop -- stops mail service (smtp connections refused, nothing goes out)
+  start -- starts mail service (smtp connection accepted, mail can go out)
+  pause -- temporarily stops mail service (connections accepted, nothing leaves)
+   cont -- continues paused mail service
+   stat -- displays status of mail service
+    cdb -- rebuild the tcpserver cdb file for smtp
+restart -- stops and restarts smtp, sends qmail-send a TERM & restarts it
+doqueue -- schedules queued messages for immediate delivery
+ reload -- sends qmail-send HUP, rereading locals and virtualdomains
+  queue -- shows status of queue
+   alrm -- same as doqueue
+  flush -- same as doqueue
+    hup -- same as reload
+HELP
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|doqueue|flush|reload|stat|pause|cont|cdb|queue|help}"
+    exit 1
+    ;;
+esac
+
+exit 0
+ 
+
+위의 것을 그대로 복사,저장 하거나 이곳에서 받을수 있다. 이것을 /etc/rc.d/init.d/ 에 qmail 이라는 이름으로 저장 한 후 실행 퍼미션을 준다. 다음 ntsysv 실행시키면 qmail 이라는 새로운 항목이 보일것이다. 리부팅 할때 qmail 데몬이 실행되도록 체크해준다.
+
+--
+chmod 755 qmail
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+1.1. 유저, 그룹 추가
+vpopmail이 제대로 작동하려면 vpopmail이 사용할 유저와 그룹을 만들어야 한다.
+
+$ groupadd vchkpw
+$ useradd -g vchkpw vpopmail
+ 
+
+이때 생성되는 vpopmail 홈 디렉토리에는 앞으로 추가할 도메인들의 모든 이메일 계정, 메일들이 저장될 곳이므로, 공간이 넉넉한 파티션을 고르는 것이 좋겠다. 다른 파티션을 사용할 것이라면 다음과 같이 할수 있다.
+
+$ useradd -g vchkpw -d /원하는/파티션의/디렉토리를/지정 vpopmail
+ 
+------------------------------------------------------------------------------------------
+1.2. 컴파일 옵션
+-------------------------------------------------------------------------------------------
+이제 vpopmail 을 설치하자.
+
+$ tar xzf vpopmail-5.2.tar.gz
+$ cd vpopmail-5.2
+ 
+
+참고: vpopmail 5.4.x 이상 버전은 --enable-default-domain 컴파일 옵션이 없어지고 ~vpopmail/etc/defaultdomain 파일을 사용하도록 되었다. 이 파일에 직접 default domain 이름을 넣어주면 된다.
+
+
+MySQL 사용하지 않을 경우
+
+sql를 사용하지 않는다면 보통 다음 옵션만 주고 컴파일 하면 된다.
+
+$ ./configure --enable-roaming-users=y
+$ make
+$ make install-strip
+ 
+///////////////-이 밑에 부분은 mysql 설정 할때-/////////////////////////////////////////
+MySQL을 사용 할 경우
+
+MySQL db를 사용하려 한다면, 컴파일 하기전에 먼저 vmysql.h 를 열어서 sql 서버를 억세스 할수 있는 user와 암호등을 설정해주어야 한다. 테이블을 생성/삭제 할수 있는 사용자 이여야 하므로 보통 root 나 해당 유저로 설정해 준다.
+
+$ ./configure --enable-default-domain=babo.org --enable-mysql=y
+$ make
+$ make install-strip
+ 
+
+이때 --enable-large-site=n|y 옵션을 사용할수도 있는데 이것은, 디폴트로 vpopmail은 모든 도메인, 유저 정보를 한개의 테이블에서 관리한다. 만약 각각의 도메인에 매우 많은 메일유저가 있다면 y 로 설정하면, vpopmail은 도메인별로 테이블을 생성,유저정보를 관리한다.
+
+참고: vpopmail 5.0 이상 버전은 --enable-large-site 옵션이 --enable-many-domains 으로 바뀌었다. 즉, 각 도메인별로 테이블을 생성관리 할것이라면 --enable-many-domains=n 옵션을 사용한다.
+
+만약 sql 헤더파일이나 라이브러리를 찾지 못한다며 컴파일에 실패한다면, --enable-sqlincdir= sql 헤더파일 경로. --enable-sqllibdir= sql 라이브러리 경로 등을 ./configure 할때 추가 해준다.
+
+
+로밍 서비스를 사용할 것이라면 --enable-roaming-users=y 옵션을 추가한다. 
+
+$ ./configure --enable-default-domain=babo.org \
+              --enable-roaming-users=y \
+              --enable-tcprules-prog=/usr/local/bin/tcprules \
+              --enable-relay-clear-minutes=15
+ 
+
+
+ip aliasing을 사용하여 각 도메인마다 각기 다른 ip를 사용할 것이라면, --enable-ip-alias-domains=y 옵션을 추가한다. 
+
+vpopmail pop 서버의 로그 조절 옵션
+
+아무런 옵션을 주지 않고 컴파일 했다면 vpopmail pop서버는 팝 유저들이 어떤 이유로든 로그인을 실패 했을 경우에만 로그를 남긴다.(/var/log/maillog 또는 /var/log/messages)에) 다음과 같은 옵션으로 로그 조절이 가능하다.
+
+
+--enable-logging=y : 모든 pop 로그인 기록과 오류 메시지를 남긴다.
+
+--enable-logging=n : 아무런 로그도 남기지 않는다.
+
+--enable-logging=e : 오류/ 치명적인 오류 메세지를 기록한다.
+
+--enable-logging=p : 오류 로그에 암호를 포함한다.
+
+--enable-logging=v : --enable-logging=y 와 같으며 사용자 암호를 로그에 포함한다.
+
+위의 예에서 사용한 babo.org는 주 도메인 이름으로 실제 사용할 도메인으로 바꿔준다. 이것을 설정하면 주서버의 메일 계정도 모두 가상 도메인의 메일 계정과 동일하게 관리 할수 있다. (이렇게 하는 것을 권장한다)
+
+참고: 매우 많은 수의 도메인과 메일 계정을 가진 대형 서버에서 vpopmail 유저들에게 SMTP 릴레이를 허용하도록 하려면 vpopmail을 MySQL를 사용하도록 컴파일 하고 tcpserver에 Matt Simerson이 만든 mysql 패치를 사용할 것을 권장한다. http://matt.simerson.net/computing/mail/toaster
+
+설치가 되었다면 ~vpopmail 안에는
+
+bin
+doc
+domains
+etc
+include
+lib
+users
+등의 디렉토리과 필요한 바이너리들이 생겼을 것이다.
+ 
+---------------------------------------------------------------------------------
+1.3. SMTP 릴레이 설정
+--------------------------------------------------------------------------------------
+vpopmail의 로밍서비스는 고정되어 있지 않은 IP사용자들에게 smtp 릴레이를 지원해 줄수 있는 기능이다. vpopmail은 먼저 POP 메일 유저의 암호를 확인한다음 얼마만큼의 시간동안 그 IP주소의 smtp 릴레이를 열어 놓게 된다. 다음과 같이 기본적인 tcp.smtp 파일을 만든다.
+
+echo "127.0.0.:allow,RELAYCLIENT=\"\"" > ~vpopmail/etc/tcp.smtp
+ 
+
+
+ 
+
+이제 기본 릴레이 파일을 만들었다면 다음 명령을 한번 실행해 준다.
+
+~vpopmail/bin/clearopensmtp
+ 
+
+마지막으로 crontab을 하나 설정해야 하는데, 이것은 cron에 의해 주기적으로 실행되어 릴레이가 허용된 IP 주소중 pop 인증 시간이 한시간 이상된 것이 있으면 지워준다. vpopmail 컴파일시 별다른 옵션을 주지 않았다면 기본적으로 릴레이 허용 시간은 한시간이며 이것은 --enable-relay-clear-minutes= 옵션으로 바꿔줄수 있다.
+
+# crontab -e
+40 * * * * /home/vpopmail/bin/clearopensmtp
+ 
+
+qmail-smtpd 시동 스크립트는 vpopmail이 조절하는 cdb 파일을 참고하도록, 다음과 같이 바꾼다.
+
+/var/qmail/supervise/qmail-smtpd/run 의 내용
+
+#!/bin/sh
+Q_UID=`id -u vpopmail`
+Q_GID=`id -g vpopmail`
+exec /usr/local/bin/softlimit -m 2000000 \
+	  /usr/local/bin/tcpserver -vRHl 0 \
+	  -x /home/vpopmail/etc/tcp.smtp.cdb \
+	  -u $Q_UID -g $Q_GID 0 25 /var/qmail/bin/qmail-smtpd 2>&1
+ 
+///////////////////////////////////////////////////////////////////////////////
+1.4. pop3 시동 파일
+vpopmail 의 pop3 시동 파일을 만들자. 적당한 곳에 디렉토리를 만들고 run 파일을 만든다.
+
+$ mkdir /var/qmail/supervise/vpop
+ 
+
+이 예제에서 babo.org는 서버의 도메인이다. vpopmail 설치시 --enable-default-domain 를 주고 설치했다면 더 안전하게 pop3 데몬을 vpopmail 유저 권한으로 실행시킬수 있다.
+
+/var/qmail/supervise/vpop/run 파일의 내용
+
+#!/bin/sh
+VPOP_UID=`id -u vpopmail`
+VPOP_GID=`id -g vpopmail`
+
+exec /usr/local/bin/softlimit -m 2500000 \
+     tcpserver -vRHl 0 -u $VPOP_UID -g $VPOP_GID 0 110 \
+     /var/qmail/bin/qmail-popup babo.org \
+     /home/vpopmail/bin/vchkpw /var/qmail/bin/qmail-pop3d Maildir 2>&1
+ 
+
+이 파일에 실행 권한을 준다.
+
+$ chmod 755 /var/qmail/supervise/vpop/run
+~vpopmail/bin 디렉토리 안에 가상 도메인 관리를 위한 바이너리들이 있는데 다음과 같은 기능을 한다.
+
+새로 생성시
+
+ ./vadddomain high1004.or.kr
+
+ 
+------------------------------------------------------------------------------------
+예
+1.5. 도메인, 메일 계정 추가하기
+---------------------------------------------------------------------------------------
+~vpopmail/bin 디렉토리 안에 가상 도메인 관리를 위한 바이너리들이 있는데 다음과 같은 기능을 한다.
+
+표 1-1. 각 바이너리들의 용도
+
+vadddomain 가상 도메인을 추가한다. postmaster 암호를 물어보는데 이것은 다음에 설치할 qmailadmin 웹 인터페이스에서 로그인 할때 물어볼 암호이다. 형식은 vadddomain 도메인명 
+vdeldomain 가상 도메인과 모든 유저를 삭제한다. vdeldomain 도메인명 
+vadduser pop 메일 유저 계정을 만든다. vadduser babo@babo.org 
+vdeluser pop 메일 유저 삭제. vdeluser babo@babo.org 
+vpasswd 메일 유저의 암호 바꾸기. vpasswd babo@babo.org 
+vsetuserquota 각 유저 별로 quota 설정을 할수 있다. vsetuserquota babo@babo.org 51200 (단위는 byte 이다). 
+vpopbull 서버에 설정되어 있는 모든 유저들에게 한번에 메일을 보낼때 유용하게 사용할수 있다. 
+
+이제 도메인을 추가하자. 위에서 주 도메인도 vpopmail에서 관리하기로 했다면 주 도메인과 메일 계정들도 추가해야 한다.
+
+만약 주 도메인이 babo.org 이고, 추가할 가상 도메인이 babo1.org, babo2.org 라고 한다면 다음과 같이 한다 (추가하기 전에 가상 도메인들의 DNS MX 레코드의 IP주소가 주 서버로 되어있는지 확인 해보자).
+
+./vadddomain babo.org
+./vadddomain babo1.org
+./vadddomain babo2.org
+ 
+
+다음 qmail 설정 파일들이 제대로 바뀌었는지 확인해보자. 주 도메인도 vpopmail이 관리하기로 했다면 /var/qmail/control/locals 파일의 내용은 localhost 만이 있어야 정상이다. qmail smtpd가 이 서버의 것이라고 인식하며 메일을 수신할 도메인들은 다음과 같이 rcpthosts 에 저장될 것이다.
+
+localhost
+babo.org
+babo1.org
+babo2.org
+ 
+
+virtualdomains 파일의 내용은
+
+babo.org:babo.org
+babo1.org:babo1.org
+babo2.org:babo2.org
+ 
+
+/var/qmail/users/assign 의 내용은
+
++babo.org-:babo.org:512:507:/home/vpopmail/domains/babo.org:-::
++babo1.org-:babo1.org:512:507:/home/vpopmail/domains/babo1.org:-::
++babo2.org-:babo2.org:512:507:/home/vpopmail/domains/babo2.org:-::
+.
+ 
+
+필요한 도메인, 메일 계정을 모두 추가했다면 우리는 이제 준비가 끝난 셈이다.
+-------------------------------------------------------------------------------
+1장. qmail 데몬 시작하기
+차례
+1.1. qmail
+1.2. 서버 제어
+모든 설정이 확실히 되었다고 생각된다면 이제 우리는 sendmail을 가차없이 죽이고 qmail 로 돌아설 때가 되었다. ;-)
+
+
+--------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------
+1.1. qmail
+--------------------------------------------------------------------------------
+만약 이전 sendmail이 아직 전송하지 못한 메일들이 메일큐에 쌓여 있다면 sendmail -q 를 실행 시켜서 전송을 마쳐 주어야 한다. 메일이 많이 쌓여 있을경우 이것은 한번의 실행으로 끝나지 않을수도 있다.
+
+/etc/rc.d/init.d/sendmail stop 또는 다른 방법으로 sendmail 을 죽인다.
+
+기존의 sendmail 바이너리를 qmail 의 것으로 바꾼다.
+
+mv /usr/lib/sendmail /usr/lib/sendmail.old
+mv /usr/sbin/sendmail /usr/sbin/sendmail.old
+ln -s /var/qmail/bin/sendmail /usr/lib
+ln -s /var/qmail/bin/sendmail /usr/sbin
+ 
+
+qmail 시동
+
+$ ln -s /var/qmail/supervise/qmail-send /service/
+$ ln -s /var/qmail/supervise/qmail-smtpd /service/
+ 
+
+이렇게 /service 디렉토리에 링크를 한번 걸어주면 링크가 존재하는 한 즉, 재부팅 한다해도 daemontools에 의해서 자동으로 서비스가 시작된다.
+------------------------------------------------------------------------------------
+1.2. 서버 제어
+daemontools은 상당히 편리한 서비스 관리 도구로 tcpserver와 함께 inetd, xinetd를 완전히 대체할 수 있다. 개인적으로 inetd, xinetd는 더 이상 사용하지 않으며, 서버들의 모든 서비스 (nntp, pop, telnet, imap...)를 이것으로 관리하고 있다.
+
+처음 사용하는 사람들을 위해 간단하게 지금까지 만든 qmail, vpopmail 서비스를 제어하는 예를 들면
+
+종료
+
+$ cd /service/qmail-send
+$ rm -f /service/qmail-send
+$ svc -dx . log
+
+$ cd /service/qmail-smtpd
+$ rm -f /service/qmail-smtpd
+$ svc -dx . log
+
+$ cd /service/vpop
+$ rm -f /service/vpop
+$ svc -dx .
+ 
+
+stat 보기
+
+$ svstat /service/vpop/
+ 
+
+qmail 큐에 있는 메일을 강제로 배달하기
+
+$ svc -a /service/qmail-send
+ 
+
+서버 잠시 중지 시키기
+
+$ svc -p /service/qmail-send
+$ svc -p /service/qmail-smtpd
+$ svc -p /service/vpop
+ 
+
+다시 진행 시키기
+
+$ svc -c /service/qmail-send
+$ svc -c /service/qmail-smtpd
+$ svc -c /service/vpop
+ 
+
+간단한 스크립트를 만들어 사용해도 편리할 것이다.
+
+----------------------------------------------------------------------------------------
+ SMTPD-AUTH 
+------------------------------------------------------------------------------------------
+모든작업은 root 에서 작업.
+
+일단 큐메일을 정지.
+
+$ /etc/rc.d/init.d/qmail stop
+
+
+큐메일에 SMTPD-AUTH 를 패치.
+
+$ tar xzf qmail-smtpd-auth-0.30.tar.gz
+$ cd qmail-smtpd-auth-0.30
+$ cp README.auth base64.c base64.h ../qmail-1.03
+$ patch -d ../qmail-1.03 < auth.patch
+
+
+패치 되었으면 큐메일 재컴파일 및 설치
+
+$ cd ../qmail-1.03
+$ make
+$ make setup check
+
+
+제대루 패치되었는지 확인.
+큐메일을 다시 기동시키고
+
+$ /etc/rc.d/init.d/qmail start
+
+$ telnet localhost 25
+Trying 127.0.0.1...
+Connected to localhost.
+Escape character is '^]'.
+220 foobar.org ESMTP
+ehlo localhost <-- 이 부분은 제가 입력한 것입니다.
+250-foobar.org
+250-PIPELINING
+250-AUTH LOGIN CRAM-MD5 PLAIN <-- 이 부분이 나오면 정상입니다.
+250 8BITMIME
+
+
